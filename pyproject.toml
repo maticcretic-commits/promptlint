@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "promptlint"
+version = "1.0.0"
+description = "Static lint for agent prompts — structure, ambiguity, contradiction candidates, hygiene, testability. Lint your prompts like your code."
+requires-python = ">=3.9"
+license = {text = "MIT"}
+
+[project.scripts]
+promptlint = "promptlint:main"
+
+[tool.setuptools]
+py-modules = ["promptlint"]
+package-dir = {"" = "src"}
