@@ -280,6 +280,44 @@ def _content_keywords(line):
     return words
 
 
+def _stem_match(a, b):
+    """Light stemming: equal after lowercasing, or one is a prefix
+    of the other with a common prefix of at least 5 characters
+    (confirm ~ confirmation, refund ~ refunds)."""
+    if a == b:
+        return True
+    if a.startswith(b) or b.startswith(a):
+        return min(len(a), len(b)) >= 5
+    return False
+
+
+def _keywords_match(kw_a, kw_b):
+    return any(_stem_match(a, b) for a in kw_a for b in kw_b)
+
+
+def _shared_keywords(kw_a, kw_b):
+    """Content keywords of kw_a that match a keyword in kw_b
+    under light stemming."""
+    return {a for a in kw_a
+            if any(_stem_match(a, b) for b in kw_b)}
+
+
+_WITHOUT_RX = _rx(r"\bwithout\b\s*(.*)$")
+_NEGATION_RX = _rx(r"\b(never|must\s+not|mustn'?t|do\s+not|don'?t|"
+                   r"not)\b")
+
+
+def _exception_keywords(line):
+    """Keywords of the exception clause of a negation-with-
+    exception line ("Never X without Y"), or None when the line
+    is not of that shape. "Never X without Y" is a CONDITIONAL
+    prohibition -- X is allowed exactly when Y holds."""
+    m = _WITHOUT_RX.search(line)
+    if not m or not _NEGATION_RX.search(line):
+        return None
+    return _content_keywords(m.group(1))
+
+
 def _is_shouting(line):
     words = line.split()
     if len(words) <= 3:
@@ -386,6 +424,15 @@ def check_contradictions(lines):
     # so its markers do not count; and a candidate needs at least
     # TWO shared content keywords — one shared generic noun ("the
     # policy") proves nothing, a shared verb + object does.
+    # Third guard: a negation-with-exception line ("Never issue a
+    # refund without explicit user confirmation") is a CONDITIONAL
+    # prohibition -- it allows the act exactly when its exception
+    # clause holds. When the other line shares at least one keyword
+    # (under light stemming) with that exception clause ("Always
+    # confirm with the user first" mandates the confirmation the
+    # exception requires), the two lines AGREE: the pair is aligned,
+    # not contradictory, and is skipped. Shared-topic keywords are
+    # likewise matched under light stemming (refund ~ refunds).
     marked = []
     for i, line in enumerate(lines, 1):
         head = re.sub(r"^[\s#>*\-•]+", "", line).lower()
@@ -401,8 +448,14 @@ def check_contradictions(lines):
             j, line_b, pol_b, kw_b = marked[b]
             if pol_a == pol_b:
                 continue
-            shared = kw_a & kw_b
+            shared = _shared_keywords(kw_a, kw_b)
             if len(shared) < 2:
+                continue
+            exc_a = _exception_keywords(line_a)
+            if exc_a and _keywords_match(exc_a, kw_b):
+                continue
+            exc_b = _exception_keywords(line_b)
+            if exc_b and _keywords_match(exc_b, kw_a):
                 continue
             pairs += 1
             if pairs <= 10:
@@ -629,6 +682,14 @@ def print_summary_table(results):
               f"{len(r['findings'])}")
 
 
+def _emit_error(code, message):
+    """Print the human error line plus the JSON error envelope,
+    both to stderr (see CONVENTIONS.md)."""
+    print(f"error: {message}", file=sys.stderr)
+    print(json.dumps({"error": {"code": code, "message": message}}),
+          file=sys.stderr)
+
+
 # ---------------------------------------------------------------------------
 # init scaffold
 # ---------------------------------------------------------------------------
@@ -672,8 +733,8 @@ def cmd_init(args):
     for name, content in targets.items():
         dest = base / name
         if dest.exists() and not args.force:
-            print(f"error: {dest} exists (use --force to overwrite)",
-                  file=sys.stderr)
+            _emit_error("already_exists",
+                        f"{dest} exists (use --force to overwrite)")
             return 2
     base.mkdir(parents=True, exist_ok=True)
     for name, content in targets.items():
@@ -692,24 +753,34 @@ def cmd_init(args):
 def cmd_lint(args):
     p = Path(args.path)
     if not p.exists():
-        print(f"error: no such file or directory: {p}",
-              file=sys.stderr)
+        _emit_error("file_not_found",
+                    f"no such file or directory: {p}")
         return 2
     files = collect_prompt_files(p)
     if not files:
-        print(f"error: no prompt files (.md/.txt) found under {p}",
-              file=sys.stderr)
+        _emit_error("no_prompt_files",
+                    f"no prompt files (.md/.txt) found under {p}")
         return 2
     results = []
     for f in files:
         try:
             results.append(lint_file(f))
         except (OSError, ValueError) as e:
-            print(f"error: {e}", file=sys.stderr)
+            _emit_error("read_error", f"{e}")
             return 2
     if args.format == "json":
+        all_findings = [f for r in results for f in r["findings"]]
+        if any(f["severity"] == "high" for f in all_findings):
+            highest = "HIGH"
+        elif all_findings:
+            highest = "INFO"
+        else:
+            highest = "NONE"
         print(json.dumps(
             {"tool": "promptlint", "version": VERSION,
+             "schema_version": 1,
+             "findings_summary": {"count": len(all_findings),
+                                  "highest_severity": highest},
              "results": results,
              "summary": {
                  "files": len(results),
@@ -750,6 +821,11 @@ def main(argv=None):
         description="Static lint for agent prompts — structure, "
                     "ambiguity, contradiction candidates, hygiene, "
                     "testability. Lint your prompts like your code.")
+    ap.add_argument("--version", action="version",
+                    version=f"promptlint {VERSION}")
+    ap.add_argument("--no-color", action="store_true",
+                    help="disable ANSI color output (promptlint "
+                         "emits no color; accepted harmlessly)")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     l = sub.add_parser("lint", help="lint one prompt file, or every "
