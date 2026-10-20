@@ -431,6 +431,64 @@ def test_cli_missing_path_is_usage_error(tmp_path):
     assert proc.returncode == 2
 
 
+def test_negation_with_exception_aligned_pair_does_not_flag():
+    # Dogfood seed: PromptRE's support-agent example. Both lines
+    # require user confirmation before a refund -- they AGREE.
+    text = (CLEAN_BASE
+            + "- `issue_refund` \u2014 refund a charge. Always confirm "
+              "with the user first.\n"
+            + "- Never issue a refund without explicit user "
+              "confirmation.")
+    assert "contradiction-polarity" not in checks_of(text)
+
+
+def test_no_without_clause_pair_still_flags():
+    text = (CLEAN_BASE + "Always issue refunds immediately.\n"
+            "Never issue a refund.")
+    assert findings_of(text, "contradiction-polarity")
+
+
+def test_without_exception_unrelated_pair_still_flags():
+    text = (CLEAN_BASE + "Never share data without consent.\n"
+            "Always share data freely.")
+    assert findings_of(text, "contradiction-polarity")
+
+
+def test_cli_json_envelope_schema_and_summary():
+    proc = run_cli("lint", str(EXAMPLES / "weak.md"),
+                   "--format", "json")
+    data = json.loads(proc.stdout)
+    assert data["schema_version"] == 1
+    assert isinstance(data["schema_version"], int)
+    total = sum(len(r["findings"]) for r in data["results"])
+    assert data["findings_summary"]["count"] == total
+    assert data["findings_summary"]["highest_severity"] == "HIGH"
+    clean = json.loads(run_cli("lint", str(EXAMPLES / "strong.md"),
+                               "--format", "json").stdout)
+    assert clean["schema_version"] == 1
+    assert clean["findings_summary"] == {"count": 0,
+                                          "highest_severity": "NONE"}
+
+
+def test_cli_version_flag():
+    proc = run_cli("--version")
+    assert proc.returncode == 0
+    assert proc.stdout.strip() == "promptlint 1.0.0"
+
+
+def test_cli_missing_path_error_envelope(tmp_path):
+    proc = run_cli("lint", str(tmp_path / "nope.md"))
+    assert proc.returncode == 2
+    assert "error: no such file or directory:" in proc.stderr
+    envelopes = [json.loads(line) for line in
+                 proc.stderr.splitlines()
+                 if line.startswith("{")]
+    assert envelopes and envelopes[-1]["error"]["code"] == \
+        "file_not_found"
+    assert envelopes[-1]["error"]["message"].startswith(
+        "no such file or directory:")
+
+
 def test_cli_init_scaffolds_a_failing_sample(tmp_path):
     proc = run_cli("init", "--dir", str(tmp_path))
     assert proc.returncode == 0
