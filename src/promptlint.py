@@ -66,8 +66,19 @@ CHECK_CATEGORY = {
 }
 
 
+# Family severity tiers (see CONVENTIONS.md): critical -> CRITICAL,
+# high -> HIGH, medium/low/info -> INFO. Findings carry both labels.
+SEVERITY_TIER = {"critical": "CRITICAL", "high": "HIGH",
+                 "medium": "INFO", "low": "INFO", "info": "INFO"}
+
+
+def severity_tier(severity):
+    return SEVERITY_TIER.get(str(severity).lower(), "INFO")
+
+
 def finding(check, severity, line, message, snippet=""):
     return {"check": check, "severity": severity,
+            "tier": severity_tier(severity),
             "category": CHECK_CATEGORY[check], "line": line,
             "message": message, "snippet": snippet}
 
