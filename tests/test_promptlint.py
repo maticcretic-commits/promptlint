@@ -500,3 +500,25 @@ def test_cli_init_scaffolds_a_failing_sample(tmp_path):
                   "contradiction-polarity", "ambiguity-cluster",
                   "unbounded-scope"):
         assert check in lint.stdout
+
+
+# ---------------------------------------------------------------------------
+# Family severity tiers (CONVENTIONS.md)
+# ---------------------------------------------------------------------------
+
+def test_severity_tier_mapping():
+    from promptlint import severity_tier
+    assert severity_tier("high") == "HIGH"
+    assert severity_tier("medium") == "INFO"
+    assert severity_tier("low") == "INFO"
+    assert severity_tier("info") == "INFO"
+
+
+def test_json_findings_carry_tier():
+    r = run_cli("lint", str(EXAMPLES / "weak.md"), "--format", "json")
+    data = json.loads(r.stdout)
+    findings = [f for res in data["results"] for f in res["findings"]]
+    assert findings
+    for f in findings:
+        assert f["tier"] == ("HIGH" if f["severity"] == "high"
+                             else "INFO")
