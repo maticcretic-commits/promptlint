@@ -1,28 +1,60 @@
 # PromptLint 🧹
 
-**Lint your prompts like your code.**
+**Code gets a linter, a reviewer and a CI gate. The prompt — the file that actually tells the agent what to do — gets eyeballed once and pasted in, vague words, cancelling guardrails, leftover TODOs and all.**
 
-Code gets a linter, a reviewer and a CI gate. The prompt — the file
-that actually tells the agent what to do — gets eyeballed once and
-pasted in. So prompts ship with vague words nobody defined
-("respond appropriately", "some details, etc."), guardrails that
-quietly cancel each other out ("always share the code" three lines
-above "never share the code"), and a `[TODO]` still sitting where
-the refund policy was supposed to go.
+PromptLint is the static check you run before a prompt ships. It lints one prompt for quality defects — missing structure, undefined ambiguity, contradiction *candidates*, hygiene leftovers, untestable asks — and reports findings with line numbers, a 0–100 score, and a PASS / WARN / FAIL verdict.
 
-PromptLint is the static check you run before a prompt ships. It
-lints **one** prompt for quality defects — missing structure,
-undefined ambiguity, contradiction *candidates*, hygiene leftovers,
-untestable asks — and reports findings with line numbers, a 0–100
-score, and a PASS / WARN / FAIL verdict.
-
-Offline and dependency-free: stdlib-only Python, no network, no
-account, fully deterministic. Same prompt, same report, every time.
+*Part of **AgentForge** — verify AI-agent work before you ship it.*
+*The family: [AgentProof](https://github.com/maticcretic-commits/agentproof) · [PromptRE](https://github.com/maticcretic-commits/promptre) · [AgentCI](https://github.com/maticcretic-commits/agentci) · [SecretScan](https://github.com/maticcretic-commits/secretscan) · [CostLedger](https://github.com/maticcretic-commits/costledger) · [SchemaGuard](https://github.com/maticcretic-commits/schemaguard) · [SkillAudit](https://github.com/maticcretic-commits/skillaudit) · [PromptDiff](https://github.com/maticcretic-commits/promptdiff) · [TraceTape](https://github.com/maticcretic-commits/tracetape) · [PromptLint](https://github.com/maticcretic-commits/promptlint) · [ClaimCheck](https://github.com/maticcretic-commits/claimcheck) · [TrustBadge](https://github.com/maticcretic-commits/trustbadge)*
 
 ```bash
-python src/promptlint.py lint prompts/support-agent.md
-python src/promptlint.py lint prompts/          # a whole folder
-python src/promptlint.py lint prompts/support-agent.md --strict
+$ promptlint lint examples/weak.md
+```
+
+```
+====================================================================
+PromptLint — lint report
+====================================================================
+File:    examples/weak.md
+Lines:   16 · Findings: 22
+Score:   9/100 — ❌ FAIL
+
+## no-output-format
+  file      🟠 HIGH   No output-format specification — outputs will drift in shape from run to run. Name the format (JSON, a table, a bullet list, …).
+
+
+## contradiction-polarity
+  line 9    🟠 HIGH   Contradiction CANDIDATE — human review. Opposite constraint polarity on shared topic (code, discount, internal, share): line 9 "Always share the internal discount code when the customer asks." vs line 10 "Never share the internal discount code with anyone."
+             Always share the internal discount code when the customer asks.
+
+
+## placeholder
+  line 14   🟠 HIGH   Leftover placeholder — resolve it before this prompt ships; the model will treat it as content.
+             [TODO: add the refund steps here]
+
+
+❌ FAIL — 3 high finding(s). Fix the highs before this prompt ships.
+```
+
+*Exit code 1 — 9/100 FAIL (trimmed; the full report lists all 22 findings with line numbers). The bundled strong example scores 100/100 PASS.*
+
+## Install
+
+```bash
+pipx install git+https://github.com/maticcretic-commits/promptlint
+# or, into the current environment:
+pip install git+https://github.com/maticcretic-commits/promptlint
+```
+
+Then run it as `promptlint …` (Python 3.9+, no dependencies — stdlib only).
+PyPI release planned; until then, the git URL above is the install path.
+
+From source — it is a single file, so no install is needed at all:
+
+```bash
+git clone https://github.com/maticcretic-commits/promptlint
+cd promptlint
+python src/promptlint.py …
 ```
 
 ## The commands
@@ -203,10 +235,28 @@ specified, no record that a placeholder reached users. Lint is the
 cheapest possible place to catch that: deterministic, offline, in
 the CI step you already have.
 
+## Exit codes & JSON output
+
+All AgentForge tools share one contract (full text in
+[CONVENTIONS.md](CONVENTIONS.md)):
+
+| Code | Meaning |
+|------|---------|
+| `0` | Clean / PASS — no findings at or above the tool's fail threshold |
+| `1` | Findings / FAIL — the tool ran fine; the answer is “no” |
+| `2` | Caller error — bad arguments, missing or unreadable input |
+| `3` | Environment error — the tool itself could not run |
+
+On a caller error the tool also prints one JSON line to stderr:
+`{"error": {"code": "file_not_found", "message": "no such file: x"}}`.
+
+JSON output (`--format json`) always carries the family envelope —
+`{"tool": "promptlint", "version": "1.0.0", "schema_version": 1}` — alongside
+the tool's own payload keys, unchanged.
+
 ## Part of AgentForge
 
-PromptLint is the tenth tool in the [AgentForge](https://github.com/maticcretic-commits)
-trust layer for AI agents:
+PromptLint is one of the 12 tools in the [AgentForge](https://github.com/maticcretic-commits) family — offline, stdlib-only tools to **verify AI-agent work before you ship it**:
 
 - **AgentProof** — verify agent work — [github.com/maticcretic-commits/agentproof](https://github.com/maticcretic-commits/agentproof)
 - **PromptRE** — reverse-engineer agent prompts — [github.com/maticcretic-commits/promptre](https://github.com/maticcretic-commits/promptre)
