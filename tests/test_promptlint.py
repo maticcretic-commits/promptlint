@@ -522,3 +522,62 @@ def test_json_findings_carry_tier():
     for f in findings:
         assert f["tier"] == ("HIGH" if f["severity"] == "high"
                              else "INFO")
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: SARIF output + stdin lint
+# ---------------------------------------------------------------------------
+
+EXAMPLES_PL = Path(__file__).parent.parent / "examples"
+
+
+def assert_sarif_shape(doc, tool_name):
+    """SARIF 2.1.0 top-level required fields (structure assertion)."""
+    assert doc["version"] == "2.1.0"
+    assert doc["$schema"].endswith("sarif-2.1.0.json")
+    assert len(doc["runs"]) == 1
+    run = doc["runs"][0]
+    driver = run["tool"]["driver"]
+    assert driver["name"] == tool_name
+    assert driver["version"]
+    assert driver["informationUri"].startswith(
+        "https://github.com/maticcretic-commits/")
+    rule_ids = {r["id"] for r in driver["rules"]}
+    for res in run["results"]:
+        assert res["ruleId"] in rule_ids
+        assert res["level"] in ("error", "warning", "note", "none")
+        assert res["message"]["text"]
+    return run
+
+
+def test_sarif_lint_weak_example():
+    js = run_cli("lint", str(EXAMPLES_PL / "weak.md"),
+                 "--format", "json")
+    assert js.returncode == 1
+    n = json.loads(js.stdout)["findings_summary"]["count"]
+    proc = run_cli("lint", str(EXAMPLES_PL / "weak.md"),
+                   "--format", "sarif")
+    assert proc.returncode == 1  # same verdict as text/json
+    run = assert_sarif_shape(json.loads(proc.stdout), "promptlint")
+    assert len(run["results"]) == n
+    assert any(r["level"] == "error" for r in run["results"])
+    loc = run["results"][0]["locations"][0]["physicalLocation"]
+    assert loc["artifactLocation"]["uri"].endswith("weak.md")
+
+
+def test_lint_stdin():
+    text = (EXAMPLES_PL / "weak.md").read_text()
+    proc = subprocess.run(
+        [sys.executable, str(CLI), "lint", "-", "--format", "json"],
+        input=text, capture_output=True, text=True)
+    assert proc.returncode == 1
+    data = json.loads(proc.stdout)  # stdout is pure JSON
+    assert data["results"][0]["path"] == "<stdin>"
+    assert data["results"][0]["verdict"] == "FAIL"
+    clean = subprocess.run(
+        [sys.executable, str(CLI), "lint", "-", "--format", "sarif"],
+        input=(EXAMPLES_PL / "strong.md").read_text(),
+        capture_output=True, text=True)
+    assert clean.returncode == 0
+    run = assert_sarif_shape(json.loads(clean.stdout), "promptlint")
+    assert run["results"] == []
