@@ -761,7 +761,73 @@ def cmd_init(args):
 # CLI
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# SARIF output (SARIF 2.1.0 — see CONVENTIONS.md)
+# ---------------------------------------------------------------------------
+
+def _sarif_level(tier, severity):
+    """Tier CRITICAL/HIGH -> error; native medium -> warning; else note."""
+    if tier in ("CRITICAL", "HIGH"):
+        return "error"
+    if severity == "medium":
+        return "warning"
+    return "note"
+
+
+def _sarif_rule_name(rule_id):
+    return "".join(p.capitalize() for p in re.split(
+        r"[^A-Za-z0-9]+", rule_id) if p) or "Finding"
+
+
+def build_sarif(results):
+    """Build a SARIF 2.1.0 log from lint results (each result carries
+    its file path; its findings carry check/severity/line)."""
+    rules, seen = [], set()
+    out = []
+    for r in results:
+        for f in r["findings"]:
+            level = _sarif_level(f["tier"], f["severity"])
+            if f["check"] not in seen:
+                seen.add(f["check"])
+                rules.append({
+                    "id": f["check"],
+                    "name": _sarif_rule_name(f["check"]),
+                    "shortDescription": {
+                        "text": f"PromptLint check: {f['check']} "
+                                f"({f['category']})"},
+                    "defaultConfiguration": {"level": level},
+                    "properties": {"severity": f["severity"],
+                                   "tier": f["tier"],
+                                   "category": f["category"]},
+                })
+            res = {"ruleId": f["check"], "level": level,
+                   "message": {"text": f["message"]}}
+            loc = {"artifactLocation": {"uri": r["path"]}}
+            if f.get("line"):
+                loc["region"] = {"startLine": f["line"]}
+            res["locations"] = [{"physicalLocation": loc}]
+            out.append(res)
+    return {
+        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+        "version": "2.1.0",
+        "runs": [{
+            "tool": {"driver": {
+                "name": "promptlint",
+                "version": VERSION,
+                "informationUri":
+                    "https://github.com/maticcretic-commits/promptlint",
+                "rules": rules,
+            }},
+            "results": out,
+        }],
+    }
+
+
 def cmd_lint(args):
+    if args.path == "-":
+        # Pipe composability (CONVENTIONS.md): lint prompt text on stdin.
+        results = [lint_text(sys.stdin.read(), path="<stdin>")]
+        return _emit_lint(args, results)
     p = Path(args.path)
     if not p.exists():
         _emit_error("file_not_found",
@@ -779,7 +845,14 @@ def cmd_lint(args):
         except (OSError, ValueError) as e:
             _emit_error("read_error", f"{e}")
             return 2
-    if args.format == "json":
+    return _emit_lint(args, results)
+
+
+def _emit_lint(args, results):
+    if args.format == "sarif":
+        print(json.dumps(build_sarif(results), indent=2,
+                         ensure_ascii=False))
+    elif args.format == "json":
         all_findings = [f for r in results for f in r["findings"]]
         if any(f["severity"] == "high" for f in all_findings):
             highest = "HIGH"
@@ -841,8 +914,9 @@ def main(argv=None):
 
     l = sub.add_parser("lint", help="lint one prompt file, or every "
                                     ".md/.txt prompt in a directory")
-    l.add_argument("path", help="prompt file or directory of prompts")
-    l.add_argument("--format", choices=("text", "json"),
+    l.add_argument("path", help="prompt file or directory of prompts "
+                                  "('-' reads one prompt from stdin)")
+    l.add_argument("--format", choices=("text", "json", "sarif"),
                    default="text")
     l.add_argument("--strict", action="store_true",
                    help="exit 1 on ANY finding, not just highs")
